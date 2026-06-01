@@ -347,4 +347,4 @@ async def startup_event():
     key = os.environ.get("SUPABASE_KEY", "NOT SET")
     # Only print partial key for security
     print(f"SUPABASE_URL: {url}")
-    print(f"SUPABASE_KEY: {'SET (' + key[:8] + '...)' if key != 'NOT SET' else 'NOT SET'}")
+    print(f"SUPABASE_KEY: {'SET (' + key[:15] + '...)' if key != 'NOT SET' else 'NOT SET'}")
