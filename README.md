@@ -1,3 +1,13 @@
+---
+title: ADM Copilot
+emoji: ✈️
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+license: mit
+---
+
 # ADM Copilot ✈️
 An AI-powered travel audit assistant that automates the investigation of Agency Debit Memos (ADMs) using Retrieval-Augmented Generation (RAG)!
 
@@ -45,7 +55,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy .env.example to .env and fill in your Supabase and Google AI API keys!
+# Copy .env.example to .env and fill in your keys
 cp .env.example .env
 ```
 
