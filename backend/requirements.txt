@@ -6,6 +6,7 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 pymupdf==1.24.5
 chromadb==0.5.0
+sentence-transformers==3.0.1
 langchain==0.2.5
 langchain-google-genai==1.0.6
 supabase==2.5.0
