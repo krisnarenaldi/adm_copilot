@@ -49,3 +49,6 @@ frontend/out/
 # Backend
 *.pyc
 __pycache__/
+
+# Binary example files
+docs/
