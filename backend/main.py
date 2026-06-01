@@ -340,3 +340,11 @@ async def list_airlines() -> list[Airline]:
 async def health_check() -> dict:
     """Liveness probe used by Hugging Face Spaces."""
     return {"status": "ok"}
+
+@app.on_event("startup")
+async def startup_event():
+    url = os.environ.get("SUPABASE_URL", "NOT SET")
+    key = os.environ.get("SUPABASE_KEY", "NOT SET")
+    # Only print partial key for security
+    print(f"SUPABASE_URL: {url}")
+    print(f"SUPABASE_KEY: {'SET (' + key[:8] + '...)' if key != 'NOT SET' else 'NOT SET'}")
