@@ -1,0 +1,71 @@
+Project Name: ADM Copilot (AI-Powered Travel Audit Assistant)
+1. Executive Summary
+1.1 Problem Statement
+In travel operations (like those managed by ATI Business Group), airline auditors manually review lengthy, convoluted PDF airline policies (Fare Rules) to investigate financial penalties called Agency Debit Memos (ADMs) issued by airlines. This manual process is slow, prone to human error, and risks significant financial leakage if valid disputes are missed or processed past the airline's strict deadline.
+
+1.2 Solution
+An AI-driven micro-SaaS dashboard that automates the audit process. Users upload an ADM document, and the system uses a localized Retrieval-Augmented Generation (RAG) architecture to cross-reference the claim against the stored airline Fare Rules. The AI outputs a clear validation verdict and automatically structures a formal dispute letter.
+
+1.3 Target Audience
+ - Travel Agency Revenue Auditors
+ - BPO Travel Operations Agents (e.g., ATI Business Group staff)
+
+2. Technical Architecture & Tech Stack
+To minimize operational costs ($0) while ensuring enterprise-grade security and optimization, the platform utilizes a decoupled, modern AI stack:
+
+- Frontend: Next.js (hosted on Vercel) for an interactive UI.
+- Backend: FastAPI (hosted on Hugging Face Spaces via Docker).
+- Vector Database: ChromaDB (Persistent client, containerized inside Hugging Face Spaces).
+- Relational Database: Supabase PostgreSQL (Free Tier) for user metrics and rate-limiting.
+- LLM & Orchestration: Gemma via LangChain/Google Python SDK.
+- Auth: database with table "users" -> email & password
+
+3. Core Feature Requirements
+  3.1 Authentication & Guardrails (Security)
+      - Requirement: Users must authenticate using email-password before accessing any analysis tool.
+      - Rate Limiting (Cost Protection): * The system must strictly limit each unique Gmail account to a maximum of 5 ADM uploads/analyses per 24-hour cycle, but it can change it via file .env
+	  	> Tracking must occur on the backend via a Supabase PostgreSQL table (user_email, upload_count, last_upload_date) to prevent API bypasses.
+	  	> When the limit is hit, the UI must display a clear, non-breaking 429 Too Many Requests message explaining when the quota resets.
+
+  3.2 Knowledge Base Ingestion (The "Fare Rules" Pipeline)
+  Requirement: The vector database must store segmented airline policies.
+  Implementation: * PDF/Text Fare Rules are parsed using PyMuPDF (fitz) for rapid text extraction.
+    - Texts are chunked using an overlapping splitter (e.g., 1000 characters, 100-character overlap) and stored inside ChromaDB with rigid metadata tags ({"airline_code": "XX"}).
+  Note: For demo deployment stability, the chroma_db directory is pre-embedded locally and built statically into the Hugging Face Docker image.
+
+  3.3 The Core Audit Pipeline (The User Workflow)
+	  The main dashboard must facilitate a seamless 3-step action flow:
+
+	[Step 1: Input Selection] ──► [Step 2: Backend Processing] ──► [Step 3: Interactive Results]
+	- Select Airline (Dropdown)   - Fetch Metadata Chunks         - Show Verdict Badge
+	- Drag & Drop ADM PDF         - Call Claude LLM               - Display Copiable Dispute Draft
+
+
+
+	Step 1: Input Selection
+	 The UI must provide an Airline Selector Dropdown (Combobox search format supporting inputs like "GA" or "Garuda Indonesia").
+	 A clean file-drop zone specifically accepting 1 ADM PDF file.
+	 Backend Action: Upon submit, the frontend passes the file along with the user's secure Google JWT token to FastAPI.
+
+	Step 2: Backend Processing & RAG Execution
+		- FastAPI verifies the incoming JWT and runs the Supabase rate-limit check.
+	    - PyMuPDF extracts raw text from the uploaded ADM.
+		- The backend initiates a Metadata Filtered Query to ChromaDB using the selected airline_code to prevent cross-airline rules bleeding.
+		- The relevant policy chunks and the raw ADM text are compiled into a strict engineering prompt and dispatched to Claude.
+
+	Step 3: Interactive Results Display
+	- The interface must cleanly segregate Claude's output markdown into three actionable views:
+	- Verdict Badge: Highly visible visual indicators (VALID DISPUTE FOUND in green or VALID ADM / NO DISPUTE in red).
+	- Analysis Explanation: A structured markdown block highlighting exactly where the policy contradictions occurred (referencing specific context clauses like dates, 
+	  booking classes, or penalty deltas).
+	- Dispute Draft Generator: A dedicated textbox generating a formal, business-English email template arguing the case, paired with a one-click "Copy to Clipboard" utility button.
+
+4. Non-Functional Requirements (Performance & UX)
+	- Performance: Text extraction from the incoming ADM must complete in under 500ms using PyMuPDF to avoid backend request time-outs.
+	- UX Responsiveness: Because LLM generation takes 3–6 seconds, the UI must show an active, step-by-step processing tracker (e.g., Extracting text... Matching rules... Querying Claude...) to manage user expectations.
+	- Responsive Design: Optimized predominantly for desktop monitors, mirroring real-world workspace environments used by data auditors.
+
+
+
+password supabase - coffee logica = vynQvTNM4A2RAcvr
+https://vrbwfpvratmcpdtdbwwc.supabase.co

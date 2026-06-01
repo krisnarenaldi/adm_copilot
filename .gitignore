@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.venv/
+venv/
+*.pyc
+
+# Environment variables (contains secrets!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Build outputs
+.next/
+dist/
+build/
+*.egg-info/
+
+# ChromaDB data (we'll bundle a static one later if needed)
+backend/chroma_db/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cache
+*.log
+*.tmp
+
+# Frontend
+frontend/.next/
+frontend/out/
+
+# Backend
+*.pyc
+__pycache__/
