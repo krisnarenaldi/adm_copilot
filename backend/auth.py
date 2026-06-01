@@ -107,6 +107,7 @@ def _get_supabase_client() -> Client:
         or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
         or os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "")
     )
+    print("KEY supabase =",key)
     if not url or not key:
         raise RuntimeError(
             "Supabase credentials not configured. "
