@@ -26,6 +26,16 @@
    );
    ```
 
+   ### Create login_attempts table (for rate limiting failed logins)
+   ```sql
+   CREATE TABLE login_attempts (
+       id SERIAL PRIMARY KEY,
+       email TEXT NOT NULL,
+       success BOOLEAN NOT NULL,
+       attempted_at TIMESTAMPTZ DEFAULT NOW()
+   );
+   ```
+
    ### Create user_uploads table
    ```sql
    CREATE TABLE user_uploads (
