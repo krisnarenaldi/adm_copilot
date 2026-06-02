@@ -1,5 +1,5 @@
 # ── Stage: runtime ────────────────────────────────────────────────────────────
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Hugging Face Spaces runs as a non-root user; create one to match
 RUN useradd -m -u 1000 appuser
