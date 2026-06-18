@@ -1,4 +1,5 @@
 
+import os
 from typing import List, Optional
 import chromadb
 from chromadb.api.types import Documents, Embeddings, EmbeddingFunction
@@ -7,7 +8,12 @@ from openai import OpenAI
 
 class OpenAIEmbeddingFunction(EmbeddingFunction[Documents]):
     def __init__(self, model_name: str = "text-embedding-3-small"):
-        self.client = OpenAI()
+        # Resolve API key: LLMLITE_KEY > OPENAI_API_KEY > None (let OpenAI() use its own default)
+        api_key = os.environ.get("LLMLITE_KEY") or os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            self.client = OpenAI(api_key=api_key)
+        else:
+            self.client = OpenAI()
         self.model_name = model_name
 
     def __call__(self, input: Documents) -> Embeddings:
