@@ -11,6 +11,7 @@ Provides endpoints for:
 
 import os
 import tempfile
+import time
 
 from dotenv import load_dotenv
 load_dotenv()  # loads backend/.env before any other imports read env vars
@@ -209,9 +210,13 @@ async def audit(
       - **429**: Rate limit exceeded (includes ``reset_at`` timestamp).
       - **502**: LLM call failed or timed out.
     """
+    # --- Start total timer ---
+    overall_start = time.perf_counter()
+
     # ------------------------------------------------------------------
     # Step 1: JWT verification
     # ------------------------------------------------------------------
+    jwt_start = time.perf_counter()
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -225,10 +230,13 @@ async def audit(
         raise HTTPException(status_code=401, detail="Invalid or expired JWT.")
 
     user_email: str = claims.sub
+    jwt_end = time.perf_counter()
+    print(f"✅ JWT verification took: {jwt_end - jwt_start:.2f}s")
 
     # ------------------------------------------------------------------
     # Step 2: Rate limit check
     # ------------------------------------------------------------------
+    rate_start = time.perf_counter()
     rate_limiter = RateLimiter()
     quota = rate_limiter.check_quota(user_email)
     if not quota.allowed:
@@ -241,10 +249,13 @@ async def audit(
             status_code=429,
             detail=f"Upload quota exceeded. Quota resets at {reset_at_iso}.",
         )
+    rate_end = time.perf_counter()
+    print(f"✅ Rate limit check took: {rate_end - rate_start:.2f}s")
 
     # ------------------------------------------------------------------
     # Step 3: PDF text extraction
     # ------------------------------------------------------------------
+    extract_start = time.perf_counter()
     pdf_bytes = await file.read()
     extractor = PDFExtractor()
     extraction_result = extractor.extract_text(pdf_bytes)
@@ -254,21 +265,27 @@ async def audit(
             detail=f"PDF extraction failed: {extraction_result.message}",
         )
     adm_text: str = extraction_result
+    extract_end = time.perf_counter()
+    print(f"✅ PDF extraction took: {extract_end - extract_start:.2f}s")
 
     # ------------------------------------------------------------------
     # Step 4: Vector retrieval
     # ------------------------------------------------------------------
+    retriever_start = time.perf_counter()
     retriever = VectorRetriever()
-    chunks = retriever.retrieve_chunks(airline_code=airline_code, query_text=adm_text)
+    chunks = retriever.retrieve_chunks(airline_code=airline_code, query_text=adm_text, top_k=5)  # Reduced from 20 to 5!
     if not chunks:
         raise HTTPException(
             status_code=422,
             detail=f"No Fare Rules are available for airline '{airline_code}'.",
         )
+    retriever_end = time.perf_counter()
+    print(f"✅ Vector retrieval took: {retriever_end - retriever_start:.2f}s, retrieved {len(chunks)} chunks")
 
     # ------------------------------------------------------------------
     # Step 5: LLM call
     # ------------------------------------------------------------------
+    llm_start = time.perf_counter()
     orchestrator = LLMOrchestrator()
     llm_result = orchestrator.run_audit(adm_text=adm_text, fare_rules_chunks=chunks)
     if isinstance(llm_result, LLMError):
@@ -283,11 +300,15 @@ async def audit(
             status_code=502,
             detail=f"AI service error: {llm_result.message}",
         )
+    llm_end = time.perf_counter()
+    print(f"✅ LLM call took: {llm_end - llm_start:.2f}s")
 
     # ------------------------------------------------------------------
     # Step 6: Record upload (only on success)
     # ------------------------------------------------------------------
     rate_limiter.record_upload(user_email)
+    overall_end = time.perf_counter()
+    print(f"✅ Total audit pipeline took: {overall_end - overall_start:.2f}s")
 
     # ------------------------------------------------------------------
     # Step 7: Return AuditResponse

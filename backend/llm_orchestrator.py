@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 import re
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 
 from models import Chunk, LLMError, LLMResponse
@@ -132,29 +132,35 @@ class LLMOrchestrator:
     Parameters
     ----------
     model_name:
-        Google AI model identifier (default: ``"gemma-3-27b-it"``).
+        OpenAI model identifier (default: ``"gpt-4o"``).
     temperature:
         Sampling temperature (default: ``0.2`` for deterministic audit output).
     timeout:
         Request timeout in seconds (default: ``60``).
     api_key:
-        Google AI API key.  If *None*, read from the ``GOOGLE_API_KEY``
+        OpenAI API key.  If *None*, read from the ``OPENAI_API_KEY``
         environment variable.
+    base_url:
+        OpenAI-compatible base URL. If *None*, read from the ``OPENAI_BASE_URL``
+        environment variable. Falls back to OpenAI's default if neither is set.
     """
 
     def __init__(
         self,
-        model_name: str = "gemini-3.5-flash",
+        model_name: str = "gpt-3.5-turbo",
         temperature: float = 0.2,
         timeout: int = 60,
         api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
-        resolved_key = api_key or os.environ.get("GOOGLE_API_KEY", "")
-        self._llm = ChatGoogleGenerativeAI(
+        resolved_key = api_key or os.environ.get("LLMLITE_KEY", "")
+        resolved_base_url = base_url or os.environ.get("LLMLITE_BASE_URL", None)
+        self._llm = ChatOpenAI(
             model=model_name,
             temperature=temperature,
             request_timeout=timeout,
-            google_api_key=resolved_key,
+            api_key=resolved_key,
+            base_url=resolved_base_url,
         )
 
     # ------------------------------------------------------------------
