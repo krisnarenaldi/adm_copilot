@@ -23,6 +23,9 @@ COPY . .
 # The chroma_db/ directory should be present in the build context.
 # If it doesn't exist yet, ChromaDB will create an empty store at startup.
 
+# Ensure chroma_db directory exists and is writable by appuser
+RUN mkdir -p /app/chroma_db && chown -R appuser:appuser /app/chroma_db
+
 # Switch to non-root user
 USER appuser
 

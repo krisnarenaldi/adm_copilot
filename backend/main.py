@@ -39,6 +39,7 @@ from rate_limiter import RateLimiter
 from pdf_extractor import PDFExtractor
 from retriever import VectorRetriever
 from llm_orchestrator import LLMOrchestrator
+from content_validator import ContentValidator
 
 app = FastAPI(
     title="ADM Copilot API",
@@ -122,12 +123,12 @@ async def upload_fare_rules(
     authorization: str | None = Header(default=None),
 ) -> IngestionResponse:
     """
-    Ingest a Fare Rules document (PDF or plain text) into ChromaDB.
+    Ingest a Fare Rules document (PDF only) into ChromaDB.
 
     - **200**: Document parsed, chunked, and stored successfully.
     - **401**: Missing or invalid JWT.
     - **409**: Document already uploaded for this airline.
-    - **422**: Extraction failure or missing/invalid parameters.
+    - **422**: Not a PDF, not a Fare Rules document, or missing/invalid parameters.
     """
     # 1. JWT authentication
     if not authorization or not authorization.startswith("Bearer "):
@@ -144,15 +145,44 @@ async def upload_fare_rules(
     if not airline_code or not airline_code.strip():
         raise HTTPException(status_code=422, detail="airline_code must be a non-empty string.")
 
-    # 3. Save uploaded file to a temp file, ingest, then clean up
+    # 3. Validate file is PDF (reject non-PDF uploads)
+    content_type = (file.content_type or "").lower()
+    if content_type != "application/pdf":
+        raise HTTPException(
+            status_code=422,
+            detail="Only PDF files are accepted. Please upload a PDF document.",
+        )
+
+    # 4. Save uploaded file to a temp file, extract text, validate content, then ingest
     tmp_path: str | None = None
     try:
-        suffix = ".pdf" if (file.content_type or "").lower() == "application/pdf" else ".txt"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp_path = tmp.name
             content = await file.read()
             tmp.write(content)
 
+        # 4a. Extract text to validate content before ingesting
+        extractor = PDFExtractor()
+        extraction_result = extractor.extract_text(content)
+        if isinstance(extraction_result, ExtractionError):
+            raise HTTPException(
+                status_code=422,
+                detail=f"PDF extraction failed: {extraction_result.message}",
+            )
+
+        # 4b. Content validation — ensure this is a Fare Rules document
+        if not ContentValidator.is_fare_rules_document(extraction_result):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "The uploaded PDF does not appear to be a Fare Rules document. "
+                    "Please upload a document that contains fare rules, tariff, "
+                    "booking class, or penalty information. Other documents such as "
+                    "FAQs, marketing materials, or general policies are not supported."
+                ),
+            )
+
+        # 4c. Ingest the document
         pipeline = IngestionPipeline()
         success, message = pipeline.ingest_document(tmp_path, airline_code.strip())
         
@@ -253,7 +283,17 @@ async def audit(
     print(f"✅ Rate limit check took: {rate_end - rate_start:.2f}s")
 
     # ------------------------------------------------------------------
-    # Step 3: PDF text extraction
+    # Step 3: Validate file is PDF (reject non-PDF uploads)
+    # ------------------------------------------------------------------
+    content_type = (file.content_type or "").lower()
+    if content_type != "application/pdf":
+        raise HTTPException(
+            status_code=422,
+            detail="Only PDF files are accepted. Please upload a PDF document.",
+        )
+
+    # ------------------------------------------------------------------
+    # Step 4: PDF text extraction
     # ------------------------------------------------------------------
     extract_start = time.perf_counter()
     pdf_bytes = await file.read()
@@ -269,7 +309,24 @@ async def audit(
     print(f"✅ PDF extraction took: {extract_end - extract_start:.2f}s")
 
     # ------------------------------------------------------------------
-    # Step 4: Vector retrieval
+    # Step 5: Content validation — ensure this is an ADM document
+    # ------------------------------------------------------------------
+    content_val_start = time.perf_counter()
+    if not ContentValidator.is_adm_document(adm_text):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The uploaded PDF does not appear to be an ADM (Agency Debit Memo) document. "
+                "Please upload a document that contains ADM data such as debit memos, "
+                "ticket information, or billing details. Other documents such as FAQs, "
+                "marketing materials, or general policies are not supported."
+            ),
+        )
+    content_val_end = time.perf_counter()
+    print(f"✅ Content validation took: {content_val_end - content_val_start:.2f}s")
+
+    # ------------------------------------------------------------------
+    # Step 6: Vector retrieval
     # ------------------------------------------------------------------
     retriever_start = time.perf_counter()
     retriever = VectorRetriever()
@@ -283,7 +340,7 @@ async def audit(
     print(f"✅ Vector retrieval took: {retriever_end - retriever_start:.2f}s, retrieved {len(chunks)} chunks")
 
     # ------------------------------------------------------------------
-    # Step 5: LLM call
+    # Step 7: LLM call
     # ------------------------------------------------------------------
     llm_start = time.perf_counter()
     orchestrator = LLMOrchestrator()
@@ -304,14 +361,14 @@ async def audit(
     print(f"✅ LLM call took: {llm_end - llm_start:.2f}s")
 
     # ------------------------------------------------------------------
-    # Step 6: Record upload (only on success)
+    # Step 8: Record upload (only on success)
     # ------------------------------------------------------------------
     rate_limiter.record_upload(user_email)
     overall_end = time.perf_counter()
     print(f"✅ Total audit pipeline took: {overall_end - overall_start:.2f}s")
 
     # ------------------------------------------------------------------
-    # Step 7: Return AuditResponse
+    # Step 9: Return AuditResponse
     # ------------------------------------------------------------------
     return AuditResponse(
         verdict=llm_result.verdict,

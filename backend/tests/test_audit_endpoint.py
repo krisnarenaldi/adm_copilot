@@ -96,6 +96,16 @@ def _patch_extractor(result):
     return patch("main.PDFExtractor", return_value=mock_ext)
 
 
+def _patch_content_validator_adm(result: bool = True):
+    """Patch ContentValidator.is_adm_document to return *result*."""
+    return patch("main.ContentValidator.is_adm_document", return_value=result)
+
+
+def _patch_content_validator_fare_rules(result: bool = True):
+    """Patch ContentValidator.is_fare_rules_document to return *result*."""
+    return patch("main.ContentValidator.is_fare_rules_document", return_value=result)
+
+
 def _patch_retriever(chunks):
     """Patch VectorRetriever.retrieve_chunks to return *chunks*."""
     mock_ret = MagicMock()
@@ -124,6 +134,7 @@ class TestAuditEndpointSuccess:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text content"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(_VALID_LLM_RESPONSE),
         ):
@@ -151,6 +162,7 @@ class TestAuditEndpointSuccess:
             _patch_auth(),
             patch("main.RateLimiter", return_value=mock_rl),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(_VALID_LLM_RESPONSE),
         ):
@@ -176,6 +188,7 @@ class TestAuditEndpointSuccess:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(no_dispute_response),
         ):
@@ -340,6 +353,142 @@ class TestAuditEndpointRateLimit:
 # PDF extraction failure (422)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Non-PDF file rejection (422)
+# ---------------------------------------------------------------------------
+
+class TestAuditEndpointNonPDF:
+    """POST /audit — 422 non-PDF file rejection cases."""
+
+    @pytest.mark.asyncio
+    async def test_non_pdf_content_type_returns_422(self, client):
+        """A file with content type other than application/pdf → 422."""
+        with (
+            _patch_auth(),
+            _patch_rate_limiter(),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("rules.txt", io.BytesIO(b"Some text content"), "text/plain")},
+                data={"airline_code": "GA"},
+            )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "Only PDF files" in detail
+
+    @pytest.mark.asyncio
+    async def test_non_pdf_does_not_execute_extraction(self, client):
+        """When file is not PDF, extraction and later steps are skipped."""
+        mock_ext = MagicMock()
+
+        with (
+            _patch_auth(),
+            _patch_rate_limiter(),
+            patch("main.PDFExtractor", return_value=mock_ext),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                data={"airline_code": "GA"},
+            )
+
+        assert response.status_code == 422
+        mock_ext.extract_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_pdf_does_not_increment_counter(self, client):
+        """record_upload must NOT be called when file is not PDF."""
+        mock_rl = MagicMock()
+        mock_rl.check_quota.return_value = _QUOTA_ALLOWED
+
+        with (
+            _patch_auth(),
+            patch("main.RateLimiter", return_value=mock_rl),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                data={"airline_code": "GA"},
+            )
+
+        assert response.status_code == 422
+        mock_rl.record_upload.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Content validation failure — not an ADM document (422)
+# ---------------------------------------------------------------------------
+
+class TestAuditEndpointContentValidation:
+    """POST /audit — 422 content validation failure cases."""
+
+    @pytest.mark.asyncio
+    async def test_not_adm_content_returns_422(self, client):
+        """When extracted text does not appear to be an ADM → 422."""
+        with (
+            _patch_auth(),
+            _patch_rate_limiter(),
+            _patch_extractor("This is an FAQ about travel policies."),
+            _patch_content_validator_adm(False),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("adm.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
+                data={"airline_code": "GA"},
+            )
+        assert response.status_code == 422
+        detail = response.json()["detail"]
+        assert "does not appear to be an ADM" in detail
+
+    @pytest.mark.asyncio
+    async def test_not_adm_content_skips_retrieval(self, client):
+        """When content validation fails, retrieval and later steps are skipped."""
+        mock_ret = MagicMock()
+
+        with (
+            _patch_auth(),
+            _patch_rate_limiter(),
+            _patch_extractor("This is an FAQ about travel policies."),
+            _patch_content_validator_adm(False),
+            patch("main.VectorRetriever", return_value=mock_ret),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("adm.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
+                data={"airline_code": "GA"},
+            )
+
+        assert response.status_code == 422
+        mock_ret.retrieve_chunks.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_not_adm_content_does_not_increment_counter(self, client):
+        """record_upload must NOT be called when content validation fails."""
+        mock_rl = MagicMock()
+        mock_rl.check_quota.return_value = _QUOTA_ALLOWED
+
+        with (
+            _patch_auth(),
+            patch("main.RateLimiter", return_value=mock_rl),
+            _patch_extractor("FAQ document about travel"),
+            _patch_content_validator_adm(False),
+        ):
+            response = await client.post(
+                "/audit",
+                headers=_auth_header(),
+                files={"file": ("adm.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
+                data={"airline_code": "GA"},
+            )
+
+        assert response.status_code == 422
+        mock_rl.record_upload.assert_not_called()
+
+
 class TestAuditEndpointExtractionFailure:
     """POST /audit — 422 PDF extraction failure cases."""
 
@@ -412,6 +561,7 @@ class TestAuditEndpointNoFareRules:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever([]),
         ):
             response = await client.post(
@@ -429,6 +579,7 @@ class TestAuditEndpointNoFareRules:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever([]),
         ):
             response = await client.post(
@@ -450,6 +601,7 @@ class TestAuditEndpointNoFareRules:
             _patch_auth(),
             patch("main.RateLimiter", return_value=mock_rl),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever([]),
         ):
             response = await client.post(
@@ -477,6 +629,7 @@ class TestAuditEndpointLLMFailure:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(LLMError("AI service call failed: connection timeout")),
         ):
@@ -498,6 +651,7 @@ class TestAuditEndpointLLMFailure:
             _patch_auth(),
             patch("main.RateLimiter", return_value=mock_rl),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(LLMError("AI service call failed: timeout")),
         ):
@@ -526,6 +680,7 @@ class TestAuditEndpointMalformedLLM:
             _patch_auth(),
             _patch_rate_limiter(),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(
                 LLMError("Malformed AI response: missing ANALYSIS section.")
@@ -549,6 +704,7 @@ class TestAuditEndpointMalformedLLM:
             _patch_auth(),
             patch("main.RateLimiter", return_value=mock_rl),
             _patch_extractor("ADM text"),
+            _patch_content_validator_adm(True),
             _patch_retriever(_VALID_CHUNKS),
             _patch_orchestrator(
                 LLMError("Malformed AI response: missing DISPUTE DRAFT section.")

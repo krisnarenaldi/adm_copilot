@@ -2,10 +2,12 @@
 Unit tests for POST /fare-rules endpoint.
 
 Tests cover:
-  - 200: valid JWT + valid file + valid airline_code → success response
+  - 200: valid JWT + valid PDF + valid airline_code → success response
   - 401: missing Authorization header
   - 401: invalid/expired JWT
   - 422: empty airline_code
+  - 422: non-PDF content type rejected
+  - 422: PDF but not a Fare Rules document (content validation)
   - 422: ingestion pipeline raises an exception
 """
 
@@ -16,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from models import UserClaims
+from models import ExtractionError, UserClaims
 
 
 # ---------------------------------------------------------------------------
@@ -25,9 +27,30 @@ from models import UserClaims
 
 _VALID_CLAIMS = UserClaims(sub="user@example.com", exp=9999999999, iat=1000000000)
 
+_MINIMAL_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+    b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+    b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n"
+    b"xref\n0 4\n0000000000 65535 f \n"
+    b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n9\n%%EOF"
+)
+
 
 def _auth_header(token: str = "valid.jwt.token") -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _patch_extractor(result="Some fare rule text."):
+    """Patch PDFExtractor.extract_text to return *result*."""
+    mock_ext = MagicMock()
+    mock_ext.extract_text.return_value = result
+    return patch("main.PDFExtractor", return_value=mock_ext)
+
+
+def _patch_content_validator_fare_rules(result: bool = True):
+    """Patch ContentValidator.is_fare_rules_document to return *result*."""
+    return patch("main.ContentValidator.is_fare_rules_document", return_value=result)
 
 
 # ---------------------------------------------------------------------------
@@ -54,11 +77,11 @@ class TestFareRulesEndpoint:
 
     @pytest.mark.asyncio
     async def test_success_returns_200(self, client):
-        with self._patch_auth(), self._patch_pipeline():
+        with self._patch_auth(), _patch_extractor(), _patch_content_validator_fare_rules(True), self._patch_pipeline():
             response = await client.post(
                 "/fare-rules",
                 headers=_auth_header(),
-                files={"file": ("rules.txt", io.BytesIO(b"Fare rule content"), "text/plain")},
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": "GA"},
             )
         assert response.status_code == 200
@@ -68,54 +91,79 @@ class TestFareRulesEndpoint:
 
     @pytest.mark.asyncio
     async def test_missing_authorization_returns_401(self, client):
-        with self._patch_auth(), self._patch_pipeline():
-            response = await client.post(
-                "/fare-rules",
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
-                data={"airline_code": "GA"},
-            )
+        response = await client.post(
+            "/fare-rules",
+            files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
+            data={"airline_code": "GA"},
+        )
         assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_invalid_jwt_returns_401(self, client):
-        with self._patch_auth(claims=None), self._patch_pipeline():
+        with self._patch_auth(claims=None):
             response = await client.post(
                 "/fare-rules",
                 headers=_auth_header("bad.token"),
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": "GA"},
             )
         assert response.status_code == 401
 
     @pytest.mark.asyncio
     async def test_empty_airline_code_returns_422(self, client):
-        with self._patch_auth(), self._patch_pipeline():
+        with self._patch_auth():
             response = await client.post(
                 "/fare-rules",
                 headers=_auth_header(),
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": ""},
             )
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_ingestion_exception_returns_422(self, client):
-        with self._patch_auth(), self._patch_pipeline(return_value=(False, "Failed to process document: parse error")):
+    async def test_non_pdf_content_type_returns_422(self, client):
+        """A file with a non-PDF content type must be rejected."""
+        with self._patch_auth():
             response = await client.post(
                 "/fare-rules",
                 headers=_auth_header(),
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                files={"file": ("rules.txt", io.BytesIO(b"Some text"), "text/plain")},
+                data={"airline_code": "GA"},
+            )
+        assert response.status_code == 422
+        assert "Only PDF files" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_not_fare_rules_content_returns_422(self, client):
+        """PDF that doesn't contain Fare Rules keywords must be rejected."""
+        with self._patch_auth(), _patch_extractor("This is a FAQ about travel policies."), _patch_content_validator_fare_rules(False):
+            response = await client.post(
+                "/fare-rules",
+                headers=_auth_header(),
+                files={"file": ("faq.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
+                data={"airline_code": "GA"},
+            )
+        assert response.status_code == 422
+        assert "does not appear to be a Fare Rules" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_ingestion_exception_returns_422(self, client):
+        with self._patch_auth(), _patch_extractor(), _patch_content_validator_fare_rules(True), self._patch_pipeline(return_value=(False, "Failed to process document: parse error")):
+            response = await client.post(
+                "/fare-rules",
+                headers=_auth_header(),
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": "GA"},
             )
         assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_success_message_contains_airline_code(self, client):
-        with self._patch_auth(), self._patch_pipeline(return_value=(True, "Fare rules for SQ ingested successfully")):
+        with self._patch_auth(), _patch_extractor(), _patch_content_validator_fare_rules(True), self._patch_pipeline(return_value=(True, "Fare rules for SQ ingested successfully")):
             response = await client.post(
                 "/fare-rules",
                 headers=_auth_header(),
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": "SQ"},
             )
         assert response.status_code == 200
@@ -124,11 +172,11 @@ class TestFareRulesEndpoint:
     @pytest.mark.asyncio
     async def test_bearer_prefix_required(self, client):
         """Authorization header without 'Bearer ' prefix must return 401."""
-        with self._patch_auth(), self._patch_pipeline():
+        with self._patch_auth():
             response = await client.post(
                 "/fare-rules",
                 headers={"Authorization": "valid.jwt.token"},  # missing "Bearer "
-                files={"file": ("rules.txt", io.BytesIO(b"content"), "text/plain")},
+                files={"file": ("fare_rules.pdf", io.BytesIO(_MINIMAL_PDF), "application/pdf")},
                 data={"airline_code": "GA"},
             )
         assert response.status_code == 401

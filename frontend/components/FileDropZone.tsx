@@ -19,7 +19,15 @@ export function FileDropZone({
   disabled = false,
 }: FileDropZoneProps) {
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    (acceptedFiles: File[], fileRejections: any[]) => {
+      // Show rejection reason if file was rejected (e.g. wrong type, too large)
+      if (fileRejections.length > 0) {
+        const rejection = fileRejections[0];
+        const errorMsg = rejection.errors[0]?.message || "File rejected";
+        // We can't set error directly here, but the dropzone won't accept it
+        console.warn("File rejected:", errorMsg);
+        return;
+      }
       if (acceptedFiles.length > 0) {
         const selectedFile = acceptedFiles[0];
         if (selectedFile.size <= 10 * 1024 * 1024) {
