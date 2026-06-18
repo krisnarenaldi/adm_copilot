@@ -153,15 +153,26 @@ class LLMOrchestrator:
         api_key: str | None = None,
         base_url: str | None = None,
     ) -> None:
-        resolved_key = api_key or os.environ.get("LLMLITE_KEY", "")
+        # Resolve API key: explicit arg > LLMLITE_KEY > OPENAI_API_KEY > None (let ChatOpenAI use its own default)
+        resolved_key = (
+            api_key
+            or os.environ.get("LLMLITE_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
         resolved_base_url = base_url or os.environ.get("LLMLITE_BASE_URL", None)
-        self._llm = ChatOpenAI(
+
+        # Only pass api_key to ChatOpenAI if it's actually set, so that if it's
+        # None the SDK can fall back to its own default (OPENAI_API_KEY env var).
+        kwargs: dict = dict(
             model=model_name,
             temperature=temperature,
             request_timeout=timeout,
-            api_key=resolved_key,
             base_url=resolved_base_url,
         )
+        if resolved_key:
+            kwargs["api_key"] = resolved_key
+
+        self._llm = ChatOpenAI(**kwargs)
 
     # ------------------------------------------------------------------
     # Public interface
