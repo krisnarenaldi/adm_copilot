@@ -8,12 +8,17 @@ from openai import OpenAI
 
 class OpenAIEmbeddingFunction(EmbeddingFunction[Documents]):
     def __init__(self, model_name: str = "text-embedding-3-small"):
-        # Resolve API key: LLMLITE_KEY > OPENAI_API_KEY > None (let OpenAI() use its own default)
+        # Resolve API key & base URL: LLMLITE_KEY > OPENAI_API_KEY > None (let OpenAI() use its own default)
         api_key = os.environ.get("LLMLITE_KEY") or os.environ.get("OPENAI_API_KEY")
+        base_url = os.environ.get("LLMLITE_BASE_URL")
+        
+        kwargs = {}
         if api_key:
-            self.client = OpenAI(api_key=api_key)
-        else:
-            self.client = OpenAI()
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+            
+        self.client = OpenAI(**kwargs)
         self.model_name = model_name
 
     def __call__(self, input: Documents) -> Embeddings:
