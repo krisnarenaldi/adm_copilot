@@ -277,8 +277,8 @@ class AuthService:
 
         Raises:
             RegistrationError: if the email domain is a free provider (and not
-                               in the dev whitelist), or if the email is already
-                               registered.
+                               in the dev whitelist), if the email is already
+                               registered, or if the domain is already registered.
         """
         # 1. Validate email domain
         if not _is_company_email(email):
@@ -298,12 +298,29 @@ class AuthService:
         if existing.data:
             raise RegistrationError("An account with this email address already exists.")
 
-        # 3. Hash password and insert user
+        # 3. Extract domain and check for duplicate domain (excluding whitelisted dev emails)
+        normalized_email = email.strip().lower()
+        is_dev = normalized_email in _DEV_WHITELIST
+        domain = None if is_dev else normalized_email.split("@")[-1]
+
+        if domain:
+            existing_domain = (
+                self._db.table("users")
+                .select("email")
+                .eq("domain", domain)
+                .limit(1)
+                .execute()
+            )
+            if existing_domain.data:
+                raise RegistrationError("An account with this company domain has already been registered.")
+
+        # 4. Hash password and insert user
         password_hash = _hash_password(password)
         self._db.table("users").insert(
             {
                 "agent_travel_name": agent_travel_name,
                 "email": email,
                 "password_hash": password_hash,
+                "domain": domain,
             }
         ).execute()

@@ -131,8 +131,8 @@ class TestParseLLMResponse:
 
 class TestBuildPrompt:
     def _make_orchestrator(self) -> LLMOrchestrator:
-        # Bypass real LLM init by patching ChatGoogleGenerativeAI
-        with patch("llm_orchestrator.ChatGoogleGenerativeAI"):
+        # Bypass real LLM init by patching ChatOpenAI
+        with patch("llm_orchestrator.ChatOpenAI"):
             return LLMOrchestrator(api_key="fake-key")
 
     def test_prompt_contains_adm_text(self):
@@ -186,7 +186,7 @@ class TestBuildPrompt:
 
 class TestRunAudit:
     def _make_orchestrator(self) -> LLMOrchestrator:
-        with patch("llm_orchestrator.ChatGoogleGenerativeAI"):
+        with patch("llm_orchestrator.ChatOpenAI"):
             return LLMOrchestrator(api_key="fake-key")
 
     def test_successful_call_returns_llm_response(self):

@@ -397,3 +397,80 @@ class TestLoginEndpoint:
         detail = response.json()["detail"].lower()
         assert "email" not in detail
         assert "password" not in detail
+
+
+# ---------------------------------------------------------------------------
+# AuthService.register
+# ---------------------------------------------------------------------------
+
+class TestRegister:
+    def test_register_success(self):
+        mock = MagicMock()
+        select_chain = _make_query_chain(rows=[], count=None)
+        
+        mock.table.return_value = select_chain
+
+        svc = _make_service(mock)
+        svc.register("My Travel Agency", "agent@mytravelagency.com", "validpassword123")
+
+        # Ensure we check for duplicate email and duplicate domain
+        mock.table.assert_called_with("users")
+        select_chain.select.assert_any_call("email")
+        select_chain.eq.assert_any_call("email", "agent@mytravelagency.com")
+        select_chain.eq.assert_any_call("domain", "mytravelagency.com")
+
+        # Verify insert includes domain
+        from unittest.mock import ANY
+        select_chain.insert.assert_called_once_with({
+            "agent_travel_name": "My Travel Agency",
+            "email": "agent@mytravelagency.com",
+            "password_hash": ANY,
+            "domain": "mytravelagency.com",
+        })
+
+    def test_register_duplicate_domain_fails(self):
+        mock = MagicMock()
+        
+        # We need the first select query (duplicate email) to return empty
+        # and the second select query (duplicate domain) to return a match.
+        email_check_chain = _make_query_chain(rows=[], count=None)
+        domain_check_chain = _make_query_chain(rows=[{"email": "other@mytravelagency.com"}], count=None)
+        
+        call_count = {"users_select": 0}
+        def table_side_effect(table_name: str):
+            if table_name == "users":
+                call_count["users_select"] += 1
+                if call_count["users_select"] == 1:
+                    return email_check_chain
+                else:
+                    return domain_check_chain
+            return MagicMock()
+
+        mock.table.side_effect = table_side_effect
+
+        svc = _make_service(mock)
+        from models import RegistrationError
+        with pytest.raises(RegistrationError) as exc_info:
+            svc.register("My Travel Agency", "agent2@mytravelagency.com", "validpassword123")
+
+        assert "company domain has already been registered" in str(exc_info.value)
+
+    def test_register_dev_whitelist_bypasses_domain_check(self):
+        mock = MagicMock()
+        select_chain = _make_query_chain(rows=[], count=None)
+        
+        mock.table.return_value = select_chain
+
+        svc = _make_service(mock)
+        # coffee.logica@gmail.com is in dev whitelist
+        svc.register("Dev Agent", "coffee.logica@gmail.com", "validpassword123")
+
+        # Verify domain is stored as None/NULL for whitelisted accounts
+        from unittest.mock import ANY
+        select_chain.insert.assert_called_once_with({
+            "agent_travel_name": "Dev Agent",
+            "email": "coffee.logica@gmail.com",
+            "password_hash": ANY,
+            "domain": None,
+        })
+
